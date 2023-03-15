@@ -5,16 +5,12 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.FileNotFoundException;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
-
 import android.net.Uri;
-import org.apache.cordova.CallbackContext;
-import org.apache.cordova.CordovaPlugin;
+
 import org.apache.cordova.CordovaResourceApi.OpenForReadResult;
-import org.apache.cordova.PluginResult;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -34,11 +30,7 @@ public class Zip extends CordovaPlugin {
     }
 
     private void unzip(final CordovaArgs args, final CallbackContext callbackContext) {
-        this.cordova.getThreadPool().execute(new Runnable() {
-            public void run() {
-                unzipSync(args, callbackContext);
-            }
-        });
+        this.cordova.getThreadPool().execute(() -> unzipSync(args, callbackContext));
     }
 
     // Can't use DataInputStream because it has the wrong endian-ness.
@@ -72,15 +64,15 @@ public class Zip extends CordovaPlugin {
             }
 
             File outputDir = resourceApi.mapUriToFile(outputUri);
+            String outputDirCanonicalPath = outputDir.getCanonicalPath();
             outputDirectory = outputDir.getAbsolutePath();
             outputDirectory += outputDirectory.endsWith(File.separator) ? "" : File.separator;
-            if (outputDir == null || (!outputDir.exists() && !outputDir.mkdirs())){
+            if (!outputDir.exists() && !outputDir.mkdirs()) {
                 String errorMessage = "Could not create output directory";
                 callbackContext.error(errorMessage);
                 Log.e(LOG_TAG, errorMessage);
                 return;
             }
-
             OpenForReadResult zipFile = resourceApi.openForRead(zipUri);
             ProgressEvent progress = new ProgressEvent();
             progress.setTotal(zipFile.length);
@@ -116,23 +108,28 @@ public class Zip extends CordovaPlugin {
             byte[] buffer = new byte[32 * 1024];
             boolean anyEntries = false;
 
-            while ((ze = zis.getNextEntry()) != null)
-            {
+            while ((ze = zis.getNextEntry()) != null) {
                 anyEntries = true;
                 String compressedName = ze.getName();
 
                 if (ze.isDirectory()) {
-                   File dir = new File(outputDirectory + compressedName);
-                   dir.mkdirs();
+                    File dir = new File(outputDirectory + compressedName);
+                    dir.mkdirs();
                 } else {
                     File file = new File(outputDirectory + compressedName);
+                    String canonicalPath = file.getCanonicalPath();
+                    if (!canonicalPath.startsWith(outputDirCanonicalPath)) {
+                        String errorMessage = "Zip traversal security error";
+                        callbackContext.error(errorMessage);
+                        Log.e(LOG_TAG, errorMessage);
+                        return;
+                    }
                     file.getParentFile().mkdirs();
-                    if(file.exists() || file.createNewFile()){
+                    if (file.exists() || file.createNewFile()) {
                         Log.w("Zip", "extracting: " + file.getPath());
                         FileOutputStream fout = new FileOutputStream(file);
                         int count;
-                        while ((count = zis.read(buffer)) != -1)
-                        {
+                        while ((count = zis.read(buffer)) != -1) {
                             fout.write(buffer, 0, count);
                         }
                         fout.close();
@@ -160,7 +157,7 @@ public class Zip extends CordovaPlugin {
             if (inputStream != null) {
                 try {
                     inputStream.close();
-                } catch (IOException e) {
+                } catch (IOException ignored) {
                 }
             }
         }
@@ -182,25 +179,31 @@ public class Zip extends CordovaPlugin {
     private static class ProgressEvent {
         private long loaded;
         private long total;
+
         public long getLoaded() {
             return loaded;
         }
+
         public void setLoaded(long loaded) {
             this.loaded = loaded;
         }
+
         public void addLoaded(long add) {
             this.loaded += add;
         }
+
         public long getTotal() {
             return total;
         }
+
         public void setTotal(long total) {
             this.total = total;
         }
+
         public JSONObject toJSONObject() throws JSONException {
             return new JSONObject(
                     "{loaded:" + loaded +
-                    ",total:" + total + "}");
+                            ",total:" + total + "}");
         }
     }
 }
